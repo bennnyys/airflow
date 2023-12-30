@@ -210,16 +210,16 @@ AIRFLOW_PIP_VERSION = "23.3.2"
 WHEEL_VERSION = "0.36.2"
 GITPYTHON_VERSION = "3.1.40"
 RICH_VERSION = "13.7.0"
+NODE_VERSION = "21.2.0"
 
 AIRFLOW_BUILD_DOCKERFILE = f"""
 FROM python:{DEFAULT_PYTHON_MAJOR_MINOR_VERSION}-slim-{ALLOWED_DEBIAN_VERSIONS[0]}
 RUN apt-get update && apt-get install -y --no-install-recommends git
-RUN pip install pip=={AIRFLOW_PIP_VERSION} wheel=={WHEEL_VERSION} \\
-   gitpython=={GITPYTHON_VERSION} rich=={RICH_VERSION}
+RUN pip install pip=={AIRFLOW_PIP_VERSION} hatch==1.9.1 gitpython=={GITPYTHON_VERSION} rich=={RICH_VERSION}
 """
 
 AIRFLOW_BUILD_IMAGE_TAG = "apache/airflow:local-build-image"
-NODE_BUILD_IMAGE_TAG = "node:21.2.0-bookworm-slim"
+NODE_BUILD_IMAGE_TAG = f"node:{NODE_VERSION}-bookworm-slim"
 
 
 def _compile_assets_in_docker():
@@ -269,25 +269,32 @@ def _compile_assets_in_docker():
     "compilation is done locally. This option is useful for officially building packages by release "
     "manager on MacOS to make sure it is a reproducible build.",
 )
+@click.option(
+    "--skip-assets-compilation",
+    is_flag=True,
+    help="Skip asset compilation when building package.",
+)
 @option_version_suffix_for_pypi
 @option_verbose
 @option_dry_run
 def prepare_airflow_packages(
     package_format: str,
     version_suffix_for_pypi: str,
+    skip_assets_compilation: bool,
     use_container_for_assets_compilation: bool,
 ):
     perform_environment_checks()
     fix_ownership_using_docker()
     cleanup_python_generated_files()
-    get_console().print("[info]Compiling assets\n")
-    from sys import platform
+    if not skip_assets_compilation:
+        get_console().print("[info]Compiling assets\n")
+        from sys import platform
 
-    if platform == "darwin" and not use_container_for_assets_compilation:
-        run_compile_www_assets(dev=False, run_in_background=False, force_clean=True)
-    else:
-        _compile_assets_in_docker()
-    get_console().print("[success]Assets compiled successfully[/]")
+        if platform == "darwin" and not use_container_for_assets_compilation:
+            run_compile_www_assets(dev=False, run_in_background=False, force_clean=True)
+        else:
+            _compile_assets_in_docker()
+        get_console().print("[success]Assets compiled successfully[/]")
     run_command(
         ["docker", "build", "--tag", AIRFLOW_BUILD_IMAGE_TAG, "-"],
         input=AIRFLOW_BUILD_DOCKERFILE,
@@ -295,25 +302,39 @@ def prepare_airflow_packages(
         check=True,
         env={"DOCKER_CLI_HINTS": "false"},
     )
-    run_command(
+    MOUNTED_HOME_DIR = AIRFLOW_SOURCES_ROOT / "files" / "home"
+    shutil.rmtree(MOUNTED_HOME_DIR.as_posix(), ignore_errors=True)
+    MOUNTED_HOME_DIR.mkdir(parents=True, exist_ok=True)
+    result = run_command(
         cmd=[
             "docker",
             "run",
             "-t",
             "-v",
-            f"{AIRFLOW_SOURCES_ROOT}:/opt/airflow:cached",
+            f"{AIRFLOW_SOURCES_ROOT.as_posix()}:/opt/airflow:cached",
             "-e",
             f"VERSION_SUFFIX_FOR_PYPI={version_suffix_for_pypi}",
+            "-e",
+            "HOME=/opt/airflow/files/home",
             "-e",
             "GITHUB_ACTIONS",
             "-e",
             f"PACKAGE_FORMAT={package_format}",
+            "-u",
+            f"{os.getuid():d}:{os.getgid():d}",
+            "-w",
+            "/opt/airflow",
             AIRFLOW_BUILD_IMAGE_TAG,
             "python",
             "/opt/airflow/scripts/in_container/run_prepare_airflow_packages.py",
         ],
-        check=True,
+        check=False,
     )
+    shutil.rmtree(MOUNTED_HOME_DIR.as_posix(), ignore_errors=True)
+    if result.returncode != 0:
+        get_console().print("[error]Error preparing Airflow package[/]")
+        fix_ownership_using_docker()
+        sys.exit(result.returncode)
     get_console().print("[success]Successfully prepared Airflow package!\n\n")
     get_console().print("\n[info]Cleaning ownership of generated files\n")
     fix_ownership_using_docker()
@@ -700,7 +721,7 @@ def run_generate_constraints_in_parallel(
 
 @release_management.command(
     name="generate-constraints",
-    help="Generates pinned constraint files with all extras from setup.py in parallel.",
+    help="Generates pinned constraint files with all extras from pyproject.toml in parallel.",
 )
 @option_python
 @option_run_in_parallel
