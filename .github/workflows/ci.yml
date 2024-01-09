@@ -1172,11 +1172,11 @@ jobs:
           breeze testing db-tests
           --parallel-test-types "${{needs.build-info.outputs.parallel-test-types-list-as-string}}"
       - name: >
-          Post Tests success: ${{needs.build-info.outputs.default-python-version}}:MinSQLAlchemy$"
+          Post Tests success: ${{needs.build-info.outputs.default-python-version}}:MinSQLAlchemy"
         uses: ./.github/actions/post_tests_success
         if: success()
       - name: >
-          Post Tests failure: ${{needs.build-info.outputs.default-python-version}}:MinSQLAlchemy$"
+          Post Tests failure: ${{needs.build-info.outputs.default-python-version}}:MinSQLAlchemy"
         uses: ./.github/actions/post_tests_failure
         if: failure()
 

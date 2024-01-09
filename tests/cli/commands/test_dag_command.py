@@ -239,9 +239,7 @@ class TestCliDags:
 
         output = stdout.getvalue()
 
-        assert (
-            f"Dry run of DAG example_branch_python_operator_decorator on " f"{DEFAULT_DATE_REPR}\n" in output
-        )
+        assert f"Dry run of DAG example_branch_python_operator_decorator on {DEFAULT_DATE_REPR}\n" in output
         assert "Task run_this_first located in DAG example_branch_python_operator_decorator\n" in output
         assert f"Dry run of DAG example_branch_operator on {DEFAULT_DATE_REPR}\n" in output
         assert "Task run_this_first located in DAG example_branch_operator\n" in output
